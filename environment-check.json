@@ -1,0 +1,19 @@
+{
+  "python": "3.11.9 (tags/v3.11.9:de54cf5, Apr  2 2024, 10:12:12) [MSC v.1938 64 bit (AMD64)]",
+  "executable": "D:\\CODE\\python\\ict\\.venv\\Scripts\\python.exe",
+  "packages": "D:\\CODE\\python\\ict\\.venv\\Lib\\site-packages",
+  "versions": {
+    "torch": "2.10.0+cpu",
+    "torchvision": "0.25.0+cpu",
+    "ultralytics": "8.4.216",
+    "opencv-python": "5.1.0.95",
+    "numpy": "2.4.6",
+    "pandas": "3.1.1",
+    "matplotlib": "3.11.2",
+    "pyyaml": "6.0.4",
+    "pillow": "13.0.0",
+    "tqdm": "4.70.1"
+  },
+  "cuda_available": false,
+  "status": "Local CPU checks passed"
+}
