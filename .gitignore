@@ -1,8 +1,34 @@
-.venv/
-.tools/
+# Local Python installations and virtual environments
+/.venv/
+/.tools/
+
+# Python caches and build artifacts
 __pycache__/
-*.pyc
-data/
-runs/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Datasets, checkpoints, training results and upload packages
+/data/
+/weights/
+/runs/
+/output/
 *.pt
+*.onnx
+*.log
+
+# Local environment reports and credentials
+/environment-check.json
 .env
+.env.*
+!.env.example
+
+# Operating system files
+.DS_Store
+Thumbs.db

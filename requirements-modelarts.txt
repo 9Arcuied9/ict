@@ -1,0 +1,9 @@
+# Keep the GPU image's compatible torch/torchvision; never install the local CPU lockfile.
+ultralytics==8.4.216
+opencv-python>=4.6,<6
+numpy>=1.26,<3
+pandas>=2,<4
+matplotlib>=3.8,<4
+PyYAML>=6,<7
+Pillow>=10,<14
+tqdm>=4.66,<5

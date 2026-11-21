@@ -1,0 +1,18 @@
+# Initial baseline, not a reproduction of the original competition entries.
+epochs: 100
+batch: 8
+imgsz: 640
+workers: 4
+seed: 42
+deterministic: true
+optimizer: SGD
+lr0: 0.01
+momentum: 0.937
+weight_decay: 0.0005
+patience: 20
+save: true
+save_period: 10
+cache: false
+amp: true
+plots: true
+close_mosaic: 10
