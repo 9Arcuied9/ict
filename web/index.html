@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>道路病害地图</title>
+<style>
+  html, body { height: 100%; margin: 0; font: 14px/1.5 "Microsoft YaHei", sans-serif; color: #1f2933; }
+  #map { position: absolute; inset: 0; }
+  #panel { position: absolute; top: 12px; left: 12px; z-index: 10; width: 230px; padding: 12px 14px;
+           background: #fff; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,.18); }
+  #panel h1 { margin: 0 0 8px; font-size: 16px; }
+  #panel label { display: block; margin-top: 8px; color: #52606d; font-size: 12px; }
+  #panel select, #panel input[type=date] { width: 100%; box-sizing: border-box; padding: 4px 6px; margin-top: 2px; }
+  #panel .row { display: flex; gap: 12px; margin-top: 10px; }
+  #panel .row label { display: flex; align-items: center; gap: 4px; margin: 0; font-size: 13px; color: inherit; }
+  #count { margin-top: 10px; font-size: 12px; color: #52606d; }
+  #legend { margin-top: 8px; font-size: 12px; }
+  #legend span { display: inline-block; margin-right: 10px; }
+  #legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; }
+  #msg { position: absolute; inset: 0; z-index: 20; display: none; align-items: center; justify-content: center;
+         background: #f5f7fa; padding: 24px; text-align: center; white-space: pre-line; }
+  .info { min-width: 200px; }
+  .info img { display: block; width: 220px; margin-top: 6px; border-radius: 4px; }
+  .info .tag { color: #b54708; font-size: 12px; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="msg"></div>
+<div id="panel">
+  <h1>道路病害地图</h1>
+  <label>类型
+    <select id="type">
+      <option value="">全部</option>
+      <option value="D00">D00 纵向裂缝</option>
+      <option value="D10">D10 横向裂缝</option>
+      <option value="D20">D20 龟裂</option>
+      <option value="D40">D40 坑槽</option>
+    </select>
+  </label>
+  <label>严重程度
+    <select id="sev">
+      <option value="">全部</option>
+      <option>轻</option><option>中</option><option>重</option>
+    </select>
+  </label>
+  <label>最近观测不早于 <input type="date" id="from"></label>
+  <label>最近观测不晚于 <input type="date" id="to"></label>
+  <div class="row">
+    <label><input type="checkbox" id="showPoints" checked> 点标记</label>
+    <label><input type="checkbox" id="showHeat"> 热力图</label>
+  </div>
+  <div id="legend">
+    <span><i style="background:#2f9e44"></i>轻</span>
+    <span><i style="background:#f08c00"></i>中</span>
+    <span><i style="background:#e03131"></i>重</span>
+  </div>
+  <div id="count"></div>
+</div>
+
+<script src="config.js"></script>
+<script>
+  const CFG = window.MAP_CONFIG || {};
+  function fail(text) {
+    const el = document.getElementById('msg');
+    el.textContent = text;
+    el.style.display = 'flex';
+  }
+  if (CFG.securityJsCode) window._AMapSecurityConfig = { securityJsCode: CFG.securityJsCode };
+</script>
+<script src="https://webapi.amap.com/loader.js"></script>
+<script>
+const TYPE_NAME = { D00: '纵向裂缝', D10: '横向裂缝', D20: '龟裂', D40: '坑槽' };
+const SEV_COLOR = { 轻: '#2f9e44', 中: '#f08c00', 重: '#e03131' };
+const SEV_WEIGHT = { 轻: 1, 中: 2, 重: 3 };
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+let AMapRef, map, heatmap, infoWindow, markers = [], all = [];
+
+async function getJson(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${url} 返回 ${res.status}`);
+  return res.json();
+}
+
+function filtered() {
+  const type = $('type').value, sev = $('sev').value;
+  const from = $('from').value, to = $('to').value;
+  return all.filter(d => {
+    // Compare on the local calendar day so the date pickers match what the user sees.
+    const day = d.last_seen ? new Date(d.last_seen).toLocaleDateString('sv-SE') : '';
+    return (!type || d.type === type) && (!sev || d.severity === sev) &&
+           (!from || day >= from) && (!to || day <= to);
+  });
+}
+
+function infoHtml(d) {
+  const seen = d.last_seen ? new Date(d.last_seen).toLocaleString('zh-CN') : '未知';
+  return `<div class="info">
+    <b>${esc(d.type)} ${esc(TYPE_NAME[d.type] || '')} / ${esc(d.severity)}</b>
+    ${d.demo ? '<div class="tag">演示数据，非真实检测</div>' : ''}
+    <div>编号：${esc(d.id)}</div>
+    <div>观测次数：${esc(d.obs_count)}</div>
+    <div>最近观测：${esc(seen)}</div>
+    <div>状态：${esc(d.status)}</div>
+    ${d.image_url ? `<img src="${esc(d.image_url)}" alt="证据图">` : ''}
+    <a href="defect.html?id=${encodeURIComponent(d.id)}">查看档案与工单</a>
+  </div>`;
+}
+
+function render() {
+  const list = filtered();
+  map.remove(markers);
+  markers = [];
+  if ($('showPoints').checked) {
+    markers = list.map(d => {
+      const m = new AMapRef.CircleMarker({
+        center: [d.lng_gcj, d.lat_gcj], radius: 8, zIndex: 20, cursor: 'pointer',
+        fillColor: SEV_COLOR[d.severity] || '#868e96', fillOpacity: 0.9,
+        strokeColor: '#fff', strokeWeight: 2,
+      });
+      m.on('click', () => {
+        infoWindow.setContent(infoHtml(d));
+        infoWindow.open(map, [d.lng_gcj, d.lat_gcj]);
+      });
+      return m;
+    });
+    map.add(markers);
+  }
+  if ($('showHeat').checked) {
+    heatmap.setDataSet({
+      data: list.map(d => ({ lng: d.lng_gcj, lat: d.lat_gcj, count: (SEV_WEIGHT[d.severity] || 1) * (d.obs_count || 1) })),
+      max: 6,
+    });
+    heatmap.show();
+  } else {
+    heatmap.hide();
+  }
+  $('count').textContent = `显示 ${list.length} / ${all.length} 处病害`;
+}
+
+async function start() {
+  if (!CFG.key || !CFG.securityJsCode) {
+    return fail('还没有配置高德地图密钥。\n请在 config.js 中填写 key 和 securityJsCode 后刷新。');
+  }
+  if (location.protocol === 'file:') {
+    return fail('请通过本地服务器打开本页面，直接双击打开时浏览器会拦截数据读取。\n在 web 目录运行：python -m http.server 8000\n然后访问 http://localhost:8000');
+  }
+  try {
+    AMapRef = await AMapLoader.load({ key: CFG.key, version: '2.0', plugins: ['AMap.HeatMap', 'AMap.Scale'] });
+  } catch (e) {
+    return fail('高德地图加载失败：' + (e && e.message || e));
+  }
+  map = new AMapRef.Map('map', { zoom: 17, center: [108.985, 34.2507] });
+  map.addControl(new AMapRef.Scale());
+  heatmap = new AMapRef.HeatMap(map, { radius: 28, opacity: [0, 0.8] });
+  heatmap.hide();
+  infoWindow = new AMapRef.InfoWindow({ offset: new AMapRef.Pixel(0, -8) });
+
+  try {
+    all = await getJson(CFG.defectsUrl);
+  } catch (e) {
+    return fail('病害数据读取失败：' + e.message);
+  }
+  if (CFG.trackUrl) {
+    try {
+      const path = await getJson(CFG.trackUrl);
+      map.add(new AMapRef.Polyline({ path, strokeColor: '#1c7ed6', strokeWeight: 4, strokeOpacity: 0.6 }));
+    } catch (e) {
+      console.warn('轨迹未加载：', e.message);
+    }
+  }
+  ['type', 'sev', 'from', 'to', 'showPoints', 'showHeat'].forEach(id => $(id).addEventListener('change', render));
+  render();
+  if (markers.length) map.setFitView(markers, false, [80, 80, 80, 280]);
+}
+start();
+</script>
+</body>
+</html>
