@@ -13,38 +13,16 @@ from filelock import FileLock
 from . import trip_observations
 from .damage_appearance import describe_crop
 from .damage_matching import distance_m, match_appearance
+from .inspection_archive import FIELDS, iter_archives
 
 
-FIELDS = ('defect_id', 'class', 'lat', 'lon', 'first_seen', 'last_seen', 'observation_count',
-          'crop', 'heading', 'road_side', 'visits')
 OBSERVATION_FIELDS = ('event_id', 'class', 'lat', 'lon', 'captured_at', 'peak_s', 'gps_quality')
 
 
 def _read_archive(path):
     if not path.is_file():
         return {}
-    # visits 保存各趟观测摘要，长期跟踪的单元格可能超过 csv 默认上限。
-    csv.field_size_limit(max(csv.field_size_limit(), 2**31 - 1))
-    archives = {}
-    with path.open(encoding='utf-8-sig', newline='') as stream:
-        rows = csv.DictReader(stream)
-        if not set(FIELDS[:8]).issubset(rows.fieldnames or ()):
-            raise ValueError(f'历史档案表缺少必要列：{path}')
-        for row in rows:
-            defect_id = int(row['defect_id'])
-            if defect_id in archives:
-                raise ValueError(f'历史档案表包含重复编号：{defect_id}')
-            archive = {name: row.get(name) or None for name in FIELDS}
-            archive.update(defect_id=defect_id, observation_count=int(row['observation_count']),
-                           visits=json.loads(row.get('visits') or '{}'))
-            for field in ('lat', 'lon', 'heading'):
-                if archive[field] is not None:
-                    archive[field] = float(archive[field])
-            for field in ('first_seen', 'last_seen'):
-                if archive[field] is not None:
-                    archive[field] = trip_observations.utc_time(archive[field]).isoformat()
-            archives[defect_id] = archive
-    return archives
+    return {row['defect_id']: row for row in iter_archives(path)}
 
 
 def _result(archive, visit, output_root):

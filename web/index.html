@@ -6,9 +6,9 @@
 <title>道路病害地图</title>
 <style>
   html, body { height: 100%; margin: 0; font: 14px/1.5 "Microsoft YaHei", sans-serif; color: #1f2933; }
-  #map { position: absolute; inset: 0; }
-  #panel { position: absolute; top: 12px; left: 12px; z-index: 10; width: 230px; padding: 12px 14px;
-           background: #fff; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,.18); }
+  body { display: grid; grid-template: "panel map" minmax(0, 1fr) / 258px minmax(0, 1fr); }
+  #map { grid-area: map; position: relative; background: #f5f7fa; }
+  #panel { grid-area: panel; padding: 12px 14px; overflow: auto; background: #fff; border-right: 1px solid #d9e2ec; }
   #panel h1 { margin: 0 0 8px; font-size: 16px; }
   #panel label { display: block; margin-top: 8px; color: #52606d; font-size: 12px; }
   #panel select, #panel input[type=date] { width: 100%; box-sizing: border-box; padding: 4px 6px; margin-top: 2px; }
@@ -18,16 +18,24 @@
   #legend { margin-top: 8px; font-size: 12px; }
   #legend span { display: inline-block; margin-right: 10px; }
   #legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; }
-  #msg { position: absolute; inset: 0; z-index: 20; display: none; align-items: center; justify-content: center;
-         background: #f5f7fa; padding: 24px; text-align: center; white-space: pre-line; }
+  #msg { color: #52606d; white-space: pre-line; }
+  #panel [hidden] { display: none; }
+  #archives { border-top: 1px solid #e4e7eb; margin-top: 12px; }
+  #archives h2 { font-size: 14px; margin: 10px 0 4px; }
+  #archives ul { list-style: none; margin: 0; padding: 0; }
+  #archives li { display: flex; flex-wrap: wrap; column-gap: 8px; margin: 5px 0; }
+  #archives li span { color: #52606d; font-size: 12px; }
   .info { min-width: 200px; }
   .info img { display: block; width: 220px; margin-top: 6px; border-radius: 4px; }
   .info .tag { color: #b54708; font-size: 12px; }
+  @media (max-width: 580px) {
+    body { grid-template: "panel" fit-content(42%) "map" minmax(0, 1fr) / minmax(0, 1fr); }
+    #panel { border-right: 0; border-bottom: 1px solid #d9e2ec; }
+  }
 </style>
 </head>
 <body>
 <div id="map"></div>
-<div id="msg"></div>
 <div id="panel">
   <h1>道路病害地图</h1>
   <label>类型
@@ -39,7 +47,7 @@
       <option value="D40">D40 坑槽</option>
     </select>
   </label>
-  <label>严重程度
+  <label id="severityFilter">严重程度
     <select id="sev">
       <option value="">全部</option>
       <option>轻</option><option>中</option><option>重</option>
@@ -57,20 +65,18 @@
     <span><i style="background:#e03131"></i>重</span>
   </div>
   <div id="count"></div>
+  <p id="msg" role="status" hidden></p>
+  <section id="archives" hidden>
+    <h2>病害列表</h2>
+    <ul id="archiveList"></ul>
+  </section>
 </div>
 
 <script src="config.js"></script>
 <script>
-  const CFG = window.MAP_CONFIG || {};
-  function fail(text) {
-    const el = document.getElementById('msg');
-    el.textContent = text;
-    el.style.display = 'flex';
-  }
-  if (CFG.securityJsCode) window._AMapSecurityConfig = { securityJsCode: CFG.securityJsCode };
-</script>
-<script src="https://webapi.amap.com/loader.js"></script>
-<script>
+const CFG = window.MAP_CONFIG || {};
+// The FastAPI route uses the database. The stand-alone static map uses its configured data files.
+const databaseMap = location.pathname === '/map/';
 const TYPE_NAME = { D00: '纵向裂缝', D10: '横向裂缝', D20: '龟裂', D40: '坑槽' };
 const SEV_COLOR = { 轻: '#2f9e44', 中: '#f08c00', 重: '#e03131' };
 const SEV_WEIGHT = { 轻: 1, 中: 2, 重: 3 };
@@ -79,10 +85,41 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 
 let AMapRef, map, heatmap, infoWindow, markers = [], all = [];
 
+function showMessage(text) {
+  $('msg').textContent = text;
+  $('msg').hidden = false;
+}
+
 async function getJson(url) {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`${url} 返回 ${res.status}`);
   return res.json();
+}
+
+function hasCoordinates(defect) {
+  return Number.isFinite(defect.lng_gcj) && Number.isFinite(defect.lat_gcj);
+}
+
+function detailUrl(defect) {
+  return '/?id=' + encodeURIComponent(defect.id);
+}
+
+function renderArchiveList(list) {
+  const rows = list.map(defect => {
+    const row = document.createElement('li');
+    const link = document.createElement('a');
+    link.href = detailUrl(defect);
+    link.textContent = `#${defect.id} ${TYPE_NAME[defect.type] || defect.type}`;
+    row.append(link);
+    if (!hasCoordinates(defect)) {
+      const status = document.createElement('span');
+      status.textContent = '暂无定位';
+      row.append(status);
+    }
+    return row;
+  });
+  $('archiveList').replaceChildren(...rows);
+  $('archives').hidden = !rows.length;
 }
 
 function filtered() {
@@ -99,23 +136,28 @@ function filtered() {
 function infoHtml(d) {
   const seen = d.last_seen ? new Date(d.last_seen).toLocaleString('zh-CN') : '未知';
   return `<div class="info">
-    <b>${esc(d.type)} ${esc(TYPE_NAME[d.type] || '')} / ${esc(d.severity)}</b>
+    <b>${esc(d.type)} ${esc(TYPE_NAME[d.type] || '')}${d.severity ? ' / ' + esc(d.severity) : ''}</b>
     ${d.demo ? '<div class="tag">演示数据，非真实检测</div>' : ''}
     <div>编号：${esc(d.id)}</div>
     <div>观测次数：${esc(d.obs_count)}</div>
     <div>最近观测：${esc(seen)}</div>
-    <div>状态：${esc(d.status)}</div>
+    ${d.status ? '<div>状态：' + esc(d.status) + '</div>' : ''}
     ${d.image_url ? `<img src="${esc(d.image_url)}" alt="证据图">` : ''}
-    <a href="defect.html?id=${encodeURIComponent(d.id)}">查看档案与工单</a>
+    ${databaseMap ? `<a href="${esc(detailUrl(d))}">查看病害详情</a>` : ''}
   </div>`;
 }
 
 function render() {
   const list = filtered();
+  const located = list.filter(hasCoordinates);
+  $('count').textContent = `显示 ${list.length} / ${all.length} 处病害${databaseMap ? '，已定位 ' + located.length + ' 处' : ''}`;
+  if (databaseMap) renderArchiveList(list);
+  if (!map) return;
+
   map.remove(markers);
   markers = [];
   if ($('showPoints').checked) {
-    markers = list.map(d => {
+    markers = located.map(d => {
       const m = new AMapRef.CircleMarker({
         center: [d.lng_gcj, d.lat_gcj], radius: 8, zIndex: 20, cursor: 'pointer',
         fillColor: SEV_COLOR[d.severity] || '#868e96', fillOpacity: 0.9,
@@ -131,40 +173,35 @@ function render() {
   }
   if ($('showHeat').checked) {
     heatmap.setDataSet({
-      data: list.map(d => ({ lng: d.lng_gcj, lat: d.lat_gcj, count: (SEV_WEIGHT[d.severity] || 1) * (d.obs_count || 1) })),
+      data: located.map(d => ({ lng: d.lng_gcj, lat: d.lat_gcj, count: (SEV_WEIGHT[d.severity] || 1) * (d.obs_count || 1) })),
       max: 6,
     });
     heatmap.show();
   } else {
     heatmap.hide();
   }
-  $('count').textContent = `显示 ${list.length} / ${all.length} 处病害`;
 }
 
-async function start() {
-  if (!CFG.key || !CFG.securityJsCode) {
-    return fail('还没有配置高德地图密钥。\n请在 config.js 中填写 key 和 securityJsCode 后刷新。');
-  }
-  if (location.protocol === 'file:') {
-    return fail('请通过本地服务器打开本页面，直接双击打开时浏览器会拦截数据读取。\n在 web 目录运行：python -m http.server 8000\n然后访问 http://localhost:8000');
-  }
-  try {
-    AMapRef = await AMapLoader.load({ key: CFG.key, version: '2.0', plugins: ['AMap.HeatMap', 'AMap.Scale'] });
-  } catch (e) {
-    return fail('高德地图加载失败：' + (e && e.message || e));
-  }
-  map = new AMapRef.Map('map', { zoom: 17, center: [108.985, 34.2507] });
+async function loadMap() {
+  if (!(CFG.key && CFG.securityJsCode)) throw new Error('请在 web/config.js 配置高德密钥。');
+  window._AMapSecurityConfig = { securityJsCode: CFG.securityJsCode };
+  await new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://webapi.amap.com/loader.js';
+    script.onload = resolve;
+    script.onerror = () => reject(new Error('无法加载高德地图服务。'));
+    document.head.append(script);
+  });
+  AMapRef = await AMapLoader.load({ key: CFG.key, version: '2.0', plugins: ['AMap.HeatMap', 'AMap.Scale'] });
+  const first = all.find(hasCoordinates);
+  const center = first ? [first.lng_gcj, first.lat_gcj] : [108.985, 34.2507];
+  map = new AMapRef.Map('map', { zoom: 17, center });
   map.addControl(new AMapRef.Scale());
   heatmap = new AMapRef.HeatMap(map, { radius: 28, opacity: [0, 0.8] });
   heatmap.hide();
   infoWindow = new AMapRef.InfoWindow({ offset: new AMapRef.Pixel(0, -8) });
 
-  try {
-    all = await getJson(CFG.defectsUrl);
-  } catch (e) {
-    return fail('病害数据读取失败：' + e.message);
-  }
-  if (CFG.trackUrl) {
+  if (!databaseMap && CFG.trackUrl) {
     try {
       const path = await getJson(CFG.trackUrl);
       map.add(new AMapRef.Polyline({ path, strokeColor: '#1c7ed6', strokeWeight: 4, strokeOpacity: 0.6 }));
@@ -172,9 +209,30 @@ async function start() {
       console.warn('轨迹未加载：', e.message);
     }
   }
+  render();
+  if (markers.length > 1) map.setFitView(markers, false, [32, 32, 32, 32]);
+}
+
+async function start() {
+  if (location.protocol === 'file:') {
+    return showMessage('请通过本地服务打开地图页。启动 backend/start-local.cmd 后访问 http://127.0.0.1:8017/map/');
+  }
+  if (databaseMap) {
+    $('severityFilter').hidden = true;
+    $('legend').hidden = true;
+  }
+  try {
+    all = await getJson(databaseMap ? '/api/defects' : CFG.defectsUrl);
+  } catch (error) {
+    return showMessage('病害数据读取失败：' + error.message);
+  }
   ['type', 'sev', 'from', 'to', 'showPoints', 'showHeat'].forEach(id => $(id).addEventListener('change', render));
   render();
-  if (markers.length) map.setFitView(markers, false, [80, 80, 80, 280]);
+  try {
+    await loadMap();
+  } catch (error) {
+    showMessage('底图加载失败：' + (error.message || error) + (databaseMap ? ' 可从列表打开详情。' : ''));
+  }
 }
 start();
 </script>

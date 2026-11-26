@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>道路病害档案</title>
+<style>
+  * { box-sizing: border-box }
+  body { margin: 0; background: #f4f6f6; color: #172d32; font: 16px/1.6 "Microsoft YaHei", sans-serif }
+  main { max-width: 880px; margin: auto; padding: 36px 20px }
+  header, form, .facts { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px 24px }
+  header { justify-content: space-between; border-bottom: 2px solid #23665d; margin-bottom: 24px }
+  h1 { font-size: 1.8rem; margin: 0 0 12px }
+  h2 { margin: 0 0 12px; font-size: 1.2rem }
+  nav { display: flex; gap: 16px; padding-bottom: 12px }
+  a { color: #165e58 }
+  input, button { font: inherit; padding: 5px 10px; border-radius: 4px; border: 1px solid #859696 }
+  input { width: 10ch }
+  button { color: white; background: #215e56; cursor: pointer }
+  article { margin-top: 24px; padding: 24px; background: white; border: 1px solid #d6e0df }
+  dt { color: #54696a; font-size: .88rem }
+  dd { margin: 2px 0 0; font-variant-numeric: tabular-nums }
+  img { max-width: 100%; max-height: 280px; display: block }
+  section { border-top: 1px solid #d6e0df; margin-top: 22px; padding-top: 16px }
+  ol { padding-left: 1.6em; margin: 0 }
+  li { margin: 8px 0; overflow-wrap: anywhere }
+</style>
+<main>
+  <header>
+    <h1>道路病害档案</h1>
+    <nav aria-label="页面导航"><a href="/map/">病害地图</a><a href="/docs">接口文档</a></nav>
+  </header>
+  <form action="/" method="get">
+    <label>病害编号 <input name="id" id="number" required pattern="[1-9][0-9]*" inputmode="numeric" value="1"></label>
+    <button>查询档案</button>
+  </form>
+  <p id="message" role="status">正在读取档案…</p>
+  <article id="record" hidden>
+    <h2 id="heading"></h2>
+    <dl class="facts">
+      <div><dt>累计观测</dt><dd id="count"></dd></div>
+      <div><dt>坐标（WGS84，纬度 / 经度）</dt><dd id="location"></dd></div>
+    </dl>
+    <section><h2>观测时间线</h2><ol id="timeline"></ol></section>
+    <section id="photo" hidden><h2>代表图</h2><img id="image" alt="该病害的代表图"></section>
+  </article>
+</main>
+<script>
+  const el = id => document.getElementById(id);
+  const number = new URLSearchParams(location.search).get('id') ?? '1';
+  el('number').value = number;
+  const types = { D00: '纵向裂缝', D10: '横向裂缝', D20: '龟裂', D40: '坑槽' };
+  async function showRecord() {
+    if (!/^[1-9][0-9]*$/.test(number)) throw new Error('请输入有效的正整数编号。');
+    const response = await fetch('/api/defects/' + encodeURIComponent(number));
+    if (response.status === 404) throw new Error('没有找到这条病害档案，请核对编号。');
+    if (!response.ok) throw new Error('读取失败（HTTP ' + response.status + '），请检查数据库连接。');
+    const record = await response.json();
+    el('heading').textContent = '病害 ' + number + ' · ' + [types[record.type], record.type].filter(Boolean).join(' ');
+    el('count').textContent = record.observation_count + ' 次';
+    el('location').textContent = record.lat == null || record.lon == null ? '暂无可靠定位' : record.lat + ' / ' + record.lon;
+    for (const visit of record.observations) {
+      const row = document.createElement('li');
+      const time = visit.captured_at ? new Date(visit.captured_at).toLocaleString('zh-CN') : '时间未知';
+      row.textContent = time + ' · ' + visit.trip_id;
+      el('timeline').append(row);
+    }
+    if (!record.observations.length) el('timeline').after('暂无逐次观测明细');
+    if (record.image_url) {
+      el('image').src = record.image_url;
+      el('photo').hidden = false;
+    }
+    el('record').hidden = false;
+    el('message').hidden = true;
+  }
+  showRecord().catch(error => { el('message').textContent = error.message; });
+</script>
+</html>
